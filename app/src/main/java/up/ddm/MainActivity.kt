@@ -1,5 +1,6 @@
 package up.ddm
 
+import android.content.Context
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -9,35 +10,47 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import kotlinx.coroutines.launch
 import org.example.Character
 import org.example.Races.*
 import org.example.Util.AttributeDistributor
+import up.ddm.data.CharacterDAO
+import up.ddm.data.CharacterDatabase
+import up.ddm.data.CharacterEntity
 import up.ddm.ui.theme.Purple40
 
 class MainActivity : ComponentActivity() {
@@ -52,6 +65,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun MyApp() {
     val navController = rememberNavController()
+    val context = LocalContext.current
 
     NavHost(navController = navController, startDestination = "racaScreen") {
         composable("racaScreen") { RacaScreen(navController) }
@@ -63,10 +77,14 @@ fun MyApp() {
         composable("resumoScreen/{raceIndex}/{attributes}") { backStackEntry ->
             val raceIndex = backStackEntry.arguments?.getString("raceIndex")?.toIntOrNull()
             val attributes = backStackEntry.arguments?.getString("attributes")
-            ResumoScreen(raceIndex, attributes)
+            ResumoScreen(navController, raceIndex, attributes, context)
+        }
+        composable("listaPersonagensScreen") {
+            ListaPersonagensScreen(navController, context)
         }
     }
 }
+
 
 @Composable
 fun RacaScreen(navController: NavHostController) {
@@ -81,16 +99,18 @@ fun RacaScreen(navController: NavHostController) {
         modifier = Modifier
             .fillMaxSize()
             .padding(16.dp),
-        verticalArrangement = Arrangement.Center,
+        verticalArrangement = Arrangement.Top,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text(text = "Escolha sua Raça", style = MaterialTheme.typography.headlineMedium)
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Exibe as opções de raças usando LazyColumn
+        // Define uma altura específica para o LazyColumn para não ocupar todo o espaço
         LazyColumn(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f), // Usa o weight para garantir que a coluna reserve espaço para o botão
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             itemsIndexed(races) { index, race ->
@@ -115,8 +135,17 @@ fun RacaScreen(navController: NavHostController) {
                 }
             }
         }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Button(onClick = {
+            navController.navigate("listaPersonagensScreen")
+        }) {
+            Text("Ver Personagens Cadastrados")
+        }
     }
 }
+
 
 @Composable
 fun AtributosScreen(navController: NavHostController, race: String?, raceIndex: Int?) {
@@ -238,9 +267,10 @@ fun AtributosScreen(navController: NavHostController, race: String?, raceIndex: 
 }
 
 @Composable
-fun ResumoScreen(raceIndex: Int?, attributesString: String?) {
+fun ResumoScreen(navController: NavHostController, raceIndex: Int?, attributesString: String?, context: Context) {
     // Converter a string recebida para uma lista de inteiros
     val attributes = attributesString?.split(",")?.mapNotNull { it.toIntOrNull() } ?: listOf(8, 8, 8, 8, 8, 8)
+
 
     // Criar um objeto de Race com base no índice
     val race: Race = when(raceIndex) {
@@ -269,6 +299,21 @@ fun ResumoScreen(raceIndex: Int?, attributesString: String?) {
     val character = Character(race, attributes)
     character.generateCharacter()
 
+    val characterEntity = CharacterEntity(
+        strength = character.abilities.strength,
+        dexterity = character.abilities.dexterity,
+        constitution = character.abilities.constitution,
+        intelligence = character.abilities.intelligence,
+        wisdom = character.abilities.wisdom,
+        charisma = character.abilities.charisma,
+        life = character.abilities.life
+    )
+
+    LaunchedEffect(Unit) {
+        val db = CharacterDatabase.getDatabase(context)
+        db.characterDao().insert(characterEntity)
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -285,5 +330,150 @@ fun ResumoScreen(raceIndex: Int?, attributesString: String?) {
         Text("Sabedoria: ${character.abilities.wisdom}")
         Text("Carisma: ${character.abilities.charisma}")
         Text("Vida: ${character.abilities.life}")
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Button(onClick = {
+            navController.navigate("listaPersonagensScreen")
+        }) {
+            Text("Ver Personagens Cadastrados")
+        }
     }
 }
+
+@Composable
+fun ListaPersonagensScreen(navController: NavHostController, context: Context) {
+    // Lista de personagens armazenados no banco
+    var characters by remember { mutableStateOf(emptyList<CharacterEntity>()) }
+
+    // Busca os personagens no banco de dados ao carregar a tela
+    LaunchedEffect(Unit) {
+        val db = CharacterDatabase.getDatabase(context)
+        characters = db.characterDao().getAllCharacters()  // Assume que você tenha implementado getAllCharacters()
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+    ) {
+        Text(
+            text = "Personagens Cadastrados",
+            style = MaterialTheme.typography.headlineMedium
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Lista de personagens
+        LazyColumn(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            items(characters) { character ->
+                CharacterCard(character, context)
+            }
+        }
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Button(onClick = {
+            navController.navigate("racaScreen")
+        }) {
+            Text("Tela Inicial")
+        }
+    }
+}
+
+@Composable
+fun CharacterCard(character: CharacterEntity, context: Context) {
+    val db = CharacterDatabase.getDatabase(context)
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(BorderStroke(1.dp, Purple40), shape = RoundedCornerShape(8.dp))
+            .padding(8.dp)
+    ) {
+        Column {
+            Text("ID: ${character.id}")
+            Text("Força: ${character.strength}")
+            Text("Destreza: ${character.dexterity}")
+            Text("Constituição: ${character.constitution}")
+            Text("Inteligência: ${character.intelligence}")
+            Text("Sabedoria: ${character.wisdom}")
+            Text("Carisma: ${character.charisma}")
+            Text("Vida: ${character.life}")
+            Spacer(modifier = Modifier.width(8.dp))
+
+            val coroutineScope = rememberCoroutineScope() // Cria um CoroutineScope
+
+            Button(onClick = {
+                coroutineScope.launch {
+                    db.characterDao().delete(character.id)
+                }
+            }) {
+                Text("Excluir")
+            }
+        }
+    }
+}
+
+
+//@Composable
+//fun EditarPersonagemScreen(navController: NavHostController, characterDao: CharacterDAO) {
+//    val characterIdState = remember { mutableStateOf("") }
+//    val character = remember { mutableStateOf<CharacterEntity?>(null) }
+//
+//    Column(
+//        modifier = Modifier
+//            .fillMaxSize()
+//            .padding(16.dp),
+//        verticalArrangement = Arrangement.Center,
+//        horizontalAlignment = Alignment.CenterHorizontally
+//    ) {
+//        // Campo para inserir o ID do personagem
+//        TextField(
+//            value = characterIdState.value,
+//            onValueChange = { characterIdState.value = it },
+//            label = { Text("ID do Personagem") },
+//            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+//        )
+//
+//        // Botão para carregar o personagem
+//        Button(onClick = {
+//            val id = characterIdState.value.toIntOrNull()
+//            if (id != null) {
+//                character.value = characterDao.getAllCharacters().find { it.id == id }
+//            } else {
+//                character.value = null // Se o ID for inválido, limpa o personagem
+//            }
+//        }) {
+//            Text("Carregar Personagem")
+//        }
+//
+//        character.value?.let { personagem ->
+//            var name by remember { mutableStateOf(personagem.name) }
+//            var race by remember { mutableStateOf(personagem.race) }
+//            // Outros atributos que deseja permitir a edição
+//
+//            TextField(value = name, onValueChange = { name = it }, label = { Text("Nome") })
+//            TextField(value = race, onValueChange = { race = it }, label = { Text("Raça") })
+//            // Outros campos de edição
+//
+//            Spacer(modifier = Modifier.height(16.dp))
+//
+//            Button(onClick = {
+//                // Atualiza o personagem com os novos valores
+//                val updatedCharacter = personagem.copy(name = name, race = race)
+//                characterDao.update(updatedCharacter)
+//                navController.popBackStack()
+//            }) {
+//                Text("Salvar Alterações")
+//            }
+//        } ?: run {
+//            // Mensagem caso o personagem não seja encontrado
+//            Text("Personagem não encontrado. Insira um ID válido.")
+//        }
+//    }
+//}
+
+
+
